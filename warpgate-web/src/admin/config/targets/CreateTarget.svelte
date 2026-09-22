@@ -2,6 +2,7 @@
     import { Alert, Button, Form, FormGroup } from '@sveltestrap/sveltestrap'
     import {
         api,
+        DesktopClipboardPolicy,
         RdpTargetCompression,
         RdpTlsSecurity,
         type TargetGroup,
@@ -96,6 +97,7 @@
                     auth: {
                         kind: 'None' as const,
                     },
+                    clipboard: DesktopClipboardPolicy.Bidirectional,
                 },
                 Rdp: {
                     kind: TargetKind.Rdp,
@@ -111,6 +113,7 @@
                     tlsSecurity: RdpTlsSecurity.Tls12,
                     compression: RdpTargetCompression.Remotefx,
                     graphicsPipeline: true,
+                    clipboard: DesktopClipboardPolicy.Bidirectional,
                 },
             }[params.kind]
             if (!options) {

@@ -209,6 +209,12 @@ pub struct TargetVncOptions {
 
     #[serde(default)]
     pub auth: VncTargetAuth,
+
+    // Clipboard direction policy. Kept as a plain comment so OpenAPI emits a direct
+    // enum reference (a field description wraps the enum in allOf, which
+    // typescript-fetch misgenerates).
+    #[serde(default)]
+    pub clipboard: DesktopClipboardPolicy,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Union)]
@@ -232,6 +238,42 @@ pub struct VncTargetPasswordAuth {
 impl Default for VncTargetAuth {
     fn default() -> Self {
         Self::None(VncTargetNoneAuth::default())
+    }
+}
+
+/// Which way text may cross the clipboard between the user and a desktop (RDP/VNC)
+/// target. Enforced where Warpgate talks to the target, so it holds for the web
+/// desktop and for native clients alike.
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Enum, Default)]
+pub enum DesktopClipboardPolicy {
+    /// Copy and paste in both directions.
+    #[default]
+    #[serde(rename = "bidirectional")]
+    #[oai(rename = "bidirectional")]
+    Bidirectional,
+    /// The user may paste into the target, but nothing copied on the target leaves it.
+    #[serde(rename = "to_target")]
+    #[oai(rename = "to_target")]
+    ToTarget,
+    /// Text copied on the target reaches the user, but the user cannot paste into it.
+    #[serde(rename = "from_target")]
+    #[oai(rename = "from_target")]
+    FromTarget,
+    /// No clipboard in either direction.
+    #[serde(rename = "disabled")]
+    #[oai(rename = "disabled")]
+    Disabled,
+}
+
+impl DesktopClipboardPolicy {
+    /// Whether the user's clipboard may be offered to the target.
+    pub fn allows_to_target(self) -> bool {
+        matches!(self, Self::Bidirectional | Self::ToTarget)
+    }
+
+    /// Whether the target's clipboard may be delivered to the user.
+    pub fn allows_from_target(self) -> bool {
+        matches!(self, Self::Bidirectional | Self::FromTarget)
     }
 }
 
@@ -282,6 +324,12 @@ pub struct TargetRdpOptions {
     #[serde(default = "_default_true")]
     #[oai(default = "_default_true")]
     pub graphics_pipeline: bool,
+
+    // Clipboard direction policy. Kept as a plain comment so OpenAPI emits a direct
+    // enum reference (a field description wraps the enum in allOf, which
+    // typescript-fetch misgenerates).
+    #[serde(default)]
+    pub clipboard: DesktopClipboardPolicy,
 
     // TLS compatibility/security profile used for the target-facing RDP connection.
     // Kept as a plain comment so OpenAPI emits a direct enum reference. A field
@@ -476,10 +524,46 @@ pub fn redact_target_secrets(value: &mut serde_json::Value) {
 #[cfg(test)]
 mod tests {
     use super::{
-        DatabaseTargetAuth, DatabaseTargetPasswordAuth, PostgresProtocolVersion,
-        RdpTargetCompression, RdpTlsSecurity, TargetHTTPOptions, TargetKubernetesOptions,
-        TargetMySqlOptions, TargetPostgresOptions, TargetRdpOptions, TargetSSHOptions, Tls,
+        DatabaseTargetAuth, DatabaseTargetPasswordAuth, DesktopClipboardPolicy,
+        PostgresProtocolVersion, RdpTargetCompression, RdpTlsSecurity, TargetHTTPOptions,
+        TargetKubernetesOptions, TargetMySqlOptions, TargetPostgresOptions, TargetRdpOptions,
+        TargetSSHOptions, TargetVncOptions, Tls,
     };
+
+    /// Targets stored before the clipboard policy existed must keep today's behaviour.
+    #[test]
+    fn a_stored_target_without_a_clipboard_policy_stays_bidirectional() {
+        let rdp: TargetRdpOptions = serde_json::from_str("{}").unwrap();
+        let vnc: TargetVncOptions = serde_json::from_str("{}").unwrap();
+
+        assert_eq!(rdp.clipboard, DesktopClipboardPolicy::Bidirectional);
+        assert_eq!(vnc.clipboard, DesktopClipboardPolicy::Bidirectional);
+    }
+
+    #[test]
+    fn clipboard_policy_directions() {
+        use DesktopClipboardPolicy::*;
+        let cases = [
+            (Bidirectional, true, true),
+            (ToTarget, true, false),
+            (FromTarget, false, true),
+            (Disabled, false, false),
+        ];
+        for (policy, to_target, from_target) in cases {
+            assert_eq!(policy.allows_to_target(), to_target, "{policy:?} to target");
+            assert_eq!(policy.allows_from_target(), from_target, "{policy:?} from target");
+        }
+    }
+
+    #[test]
+    fn clipboard_policy_wire_names() {
+        let policy: DesktopClipboardPolicy = serde_json::from_str(r#""to_target""#).unwrap();
+        assert_eq!(policy, DesktopClipboardPolicy::ToTarget);
+        assert_eq!(
+            serde_json::to_string(&DesktopClipboardPolicy::FromTarget).unwrap(),
+            r#""from_target""#
+        );
+    }
 
     /// The two ways of saying "nothing specified" — an absent `tls` block and an
     /// empty one — must both resolve to verifying.

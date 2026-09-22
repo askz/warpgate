@@ -43,6 +43,7 @@ def _provision(api, vnc_port, otp_key_base64):
                             kind="Password", password="123"
                         )
                     ),
+                    clipboard=sdk.DesktopClipboardPolicy.BIDIRECTIONAL,
                 )
             ),
         )

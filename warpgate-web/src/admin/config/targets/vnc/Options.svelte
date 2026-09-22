@@ -1,6 +1,7 @@
 <script lang="ts">
     import { FormGroup } from '@sveltestrap/sveltestrap'
     import type { TargetOptionsTargetVncOptions } from 'admin/lib/api'
+    import DesktopClipboardPolicySelect from '../DesktopClipboardPolicySelect.svelte'
 
     interface Props {
         options: TargetOptionsTargetVncOptions
@@ -61,3 +62,5 @@
         >
     </FormGroup>
 {/if}
+
+<DesktopClipboardPolicySelect bind:clipboard={options.clipboard} />

@@ -5115,6 +5115,16 @@
           }
         }
       },
+      "DesktopClipboardPolicy": {
+        "type": "string",
+        "description": "Which way text may cross the clipboard between the user and a desktop (RDP/VNC)\ntarget. Enforced where Warpgate talks to the target, so it holds for the web\ndesktop and for native clients alike.",
+        "enum": [
+          "bidirectional",
+          "to_target",
+          "from_target",
+          "disabled"
+        ]
+      },
       "ExistingCertificateCredential": {
         "type": "object",
         "title": "ExistingCertificateCredential",
@@ -7370,6 +7380,7 @@
           "verify_tls",
           "compression",
           "interactive_logon",
+          "clipboard",
           "tls_security"
         ],
         "properties": {
@@ -7404,6 +7415,9 @@
             "type": "boolean",
             "description": "Offer the RDP Graphics Pipeline (MS-RDPEGFX). Servers that dropped the legacy\nbitmap paths, such as GNOME Remote Desktop and KDE KRDP, refuse clients without\nit. Turn it off only if a server renders incorrectly with it.",
             "default": true
+          },
+          "clipboard": {
+            "$ref": "#/components/schemas/DesktopClipboardPolicy"
           },
           "tls_security": {
             "$ref": "#/components/schemas/RdpTlsSecurity"
@@ -7500,7 +7514,8 @@
         "required": [
           "host",
           "port",
-          "auth"
+          "auth",
+          "clipboard"
         ],
         "properties": {
           "host": {
@@ -7512,6 +7527,9 @@
           },
           "auth": {
             "$ref": "#/components/schemas/VncTargetAuth"
+          },
+          "clipboard": {
+            "$ref": "#/components/schemas/DesktopClipboardPolicy"
           }
         }
       },

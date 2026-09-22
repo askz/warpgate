@@ -6,6 +6,7 @@
         type TargetOptionsTargetRdpOptions,
     } from 'admin/lib/api'
     import HelpText from 'admin/lib/HelpText.svelte'
+    import DesktopClipboardPolicySelect from '../DesktopClipboardPolicySelect.svelte'
 
     interface Props {
         options: TargetOptionsTargetRdpOptions
@@ -114,3 +115,5 @@
     Required by GNOME Remote Desktop and KDE KRDP, which refuse clients without
     it. Turn it off only if a server renders incorrectly with it.
 </HelpText>
+
+<DesktopClipboardPolicySelect bind:clipboard={options.clipboard} />

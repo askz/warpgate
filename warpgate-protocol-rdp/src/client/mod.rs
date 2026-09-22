@@ -37,7 +37,7 @@ use ironrdp_tokio::{FramedWrite as _, TokioFramed};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::{debug, warn};
-use warpgate_common::{RdpTargetAuth, RdpTargetCompression, TargetRdpOptions};
+use warpgate_common::{DesktopClipboardPolicy, RdpTargetAuth, RdpTargetCompression, TargetRdpOptions};
 use warpgate_core::{DesktopEvent, DesktopInput, DesktopRect, DesktopState};
 
 pub(crate) use self::logon::LogonWatcher;
@@ -62,16 +62,32 @@ enum ClipboardOut {
     Text(String),
 }
 
+/// The target-facing end of the clipboard bridge, and the one place the target's
+/// clipboard policy is enforced for every consumer (web desktop and native clients).
 #[derive(Debug, Clone)]
-struct ClientClipboardSink(UnboundedSender<ClipboardOut>);
+struct ClientClipboardSink {
+    out: UnboundedSender<ClipboardOut>,
+    policy: DesktopClipboardPolicy,
+}
 
 impl ClipboardSink for ClientClipboardSink {
     fn request(&self, message: ClipboardMessage) {
-        let _ = self.0.send(ClipboardOut::Request(message));
+        // Asking the target to render its clipboard is the only way its contents reach
+        // us, so when they may not leave the target they are never requested at all.
+        if matches!(message, ClipboardMessage::SendInitiatePaste(_))
+            && !self.policy.allows_from_target()
+        {
+            debug!("Not fetching the target's clipboard: policy forbids copying from the target");
+            return;
+        }
+        let _ = self.out.send(ClipboardOut::Request(message));
     }
 
     fn text_received(&self, text: String) {
-        let _ = self.0.send(ClipboardOut::Text(text));
+        if !self.policy.allows_from_target() {
+            return;
+        }
+        let _ = self.out.send(ClipboardOut::Text(text));
     }
 }
 
@@ -103,7 +119,14 @@ pub async fn run(
     );
 
     let (clipboard_tx, clipboard_rx) = unbounded_channel();
-    let clipboard = Clipboard::deferred(ClientClipboardSink(clipboard_tx));
+    let clipboard = Clipboard::deferred(ClientClipboardSink {
+        out: clipboard_tx,
+        policy: options.clipboard,
+    });
+    // With the clipboard disabled the channel is not even negotiated, so the target has
+    // nothing to announce and nothing to send.
+    let clipboard_backend = (options.clipboard != DesktopClipboardPolicy::Disabled)
+        .then(|| clipboard.backend());
 
     let (connection_result, framed) = tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
@@ -113,7 +136,7 @@ pub async fn run(
             options.port,
             options.verify_tls,
             options.tls_security,
-            clipboard.backend(),
+            clipboard_backend,
         ),
     )
     .await
@@ -205,7 +228,13 @@ async fn active_loop(
                 {
                     match input {
                         DesktopInput::Resize { width, height } => resize = Some((width, height)),
-                        DesktopInput::Clipboard(text) => clipboard.offer(text),
+                        DesktopInput::Clipboard(text) => {
+                            if clipboard.sink().policy.allows_to_target() {
+                                clipboard.offer(text);
+                            } else {
+                                debug!("Dropping clipboard offer: policy forbids pasting into the target");
+                            }
+                        }
                         other => input::translate(other, &mut ops),
                     }
                 }
@@ -696,7 +725,7 @@ async fn connect(
     port: u16,
     verify_tls: bool,
     tls_security: warpgate_common::RdpTlsSecurity,
-    clipboard: TextClipboard<ClientClipboardSink>,
+    clipboard: Option<TextClipboard<ClientClipboardSink>>,
 ) -> Result<(ConnectionResult, Framed)> {
     let tcp_stream = tokio::time::timeout(
         CONNECT_TIMEOUT,
@@ -723,9 +752,11 @@ async fn connect(
             None,
         ));
     }
-    let mut connector = connector::ClientConnector::new(config, client_addr)
-        .with_static_channel(drdynvc)
-        .with_static_channel(CliprdrClient::new(Box::new(clipboard)));
+    let mut connector =
+        connector::ClientConnector::new(config, client_addr).with_static_channel(drdynvc);
+    if let Some(clipboard) = clipboard {
+        connector = connector.with_static_channel(CliprdrClient::new(Box::new(clipboard)));
+    }
 
     let should_upgrade = ironrdp_tokio::connect_begin(&mut framed, &mut connector)
         .await
@@ -766,11 +797,63 @@ async fn connect(
 
 #[cfg(test)]
 mod tests {
+    use ironrdp::cliprdr::backend::ClipboardMessage;
+    use ironrdp::cliprdr::pdu::ClipboardFormatId;
     use ironrdp::graphics::image_processing::PixelFormat;
     use ironrdp::session::image::DecodedImage;
+    use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+    use warpgate_common::DesktopClipboardPolicy;
     use warpgate_core::{DesktopEvent, DesktopRect};
 
-    use super::{connector, encode_resized_keyframe};
+    use super::{ClientClipboardSink, ClipboardOut, connector, encode_resized_keyframe};
+    use crate::clipboard::ClipboardSink as _;
+
+    fn sink(policy: DesktopClipboardPolicy) -> (ClientClipboardSink, UnboundedReceiver<ClipboardOut>) {
+        let (out, rx) = unbounded_channel();
+        (ClientClipboardSink { out, policy }, rx)
+    }
+
+    /// Copying out of the target starts with Warpgate asking it to render its
+    /// clipboard; a policy that forbids that must stop the request itself, so the
+    /// target's contents never reach Warpgate, rather than just filtering them later.
+    #[test]
+    fn a_to_target_policy_never_requests_the_targets_clipboard() {
+        let (sink, mut rx) = sink(DesktopClipboardPolicy::ToTarget);
+
+        sink.request(ClipboardMessage::SendInitiatePaste(ClipboardFormatId::CF_UNICODETEXT));
+        sink.text_received("secret".to_owned());
+
+        assert!(rx.try_recv().is_err(), "nothing may flow from the target");
+    }
+
+    /// The same policy must still let the user's clipboard be announced to the target.
+    #[test]
+    fn a_to_target_policy_still_offers_the_users_clipboard() {
+        let (sink, mut rx) = sink(DesktopClipboardPolicy::ToTarget);
+
+        sink.request(ClipboardMessage::SendInitiateCopy(vec![]));
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClipboardOut::Request(ClipboardMessage::SendInitiateCopy(_)))
+        ));
+    }
+
+    #[test]
+    fn a_bidirectional_policy_fetches_and_forwards_the_targets_clipboard() {
+        let (sink, mut rx) = sink(DesktopClipboardPolicy::Bidirectional);
+
+        sink.request(ClipboardMessage::SendInitiatePaste(ClipboardFormatId::CF_UNICODETEXT));
+        sink.text_received("hello".to_owned());
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClipboardOut::Request(ClipboardMessage::SendInitiatePaste(
+                ClipboardFormatId::CF_UNICODETEXT
+            )))
+        ));
+        assert!(matches!(rx.try_recv(), Ok(ClipboardOut::Text(text)) if text == "hello"));
+    }
 
     #[test]
     fn resized_keyframe_covers_the_new_desktop() {

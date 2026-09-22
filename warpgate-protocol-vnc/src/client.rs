@@ -4,7 +4,7 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, UnboundedReceiver, channel, unbounded_channel};
 use tracing::{Instrument, debug, error, info_span, warn};
 use vnc::{ClientKeyEvent, PixelFormat, VncConnector, VncEncoding, VncEvent, X11Event};
-use warpgate_common::{TargetVncOptions, VncTargetAuth, WarpgateError};
+use warpgate_common::{DesktopClipboardPolicy, TargetVncOptions, VncTargetAuth, WarpgateError};
 use warpgate_core::{
     AdmittedTarget, DESKTOP_INPUT_CHANNEL_CAPACITY, DesktopClientHandles, DesktopEvent,
     DesktopInput, DesktopRect, DesktopState, LogonState,
@@ -189,12 +189,17 @@ async fn run(
     // Ask for an initial full frame.
     client.input(X11Event::FullRefresh).await.ok();
 
+    // VNC servers push their clipboard unprompted, so a policy that forbids copying from
+    // the target can only drop it on arrival (unlike RDP, where it is never requested).
+    let clipboard = options.clipboard;
+
     loop {
         tokio::select! {
             event = client.poll_event() => {
                 match event {
                     Ok(Some(event)) => {
                         if let Some(mapped) = map_event(event)
+                            && clipboard_allows_event(clipboard, &mapped)
                             && event_tx.send(mapped).await.is_err()
                         {
                             break;
@@ -212,6 +217,10 @@ async fn run(
             input = input_rx.recv() => {
                 match input {
                     Some(input) => {
+                        if !clipboard_allows_input(clipboard, &input) {
+                            debug!("Dropping clipboard offer: policy forbids pasting into the target");
+                            continue;
+                        }
                         for event in map_input(input) {
                             if let Err(error) = client.input(event).await {
                                 warn!(%error, "VNC input error");
@@ -231,6 +240,16 @@ async fn run(
 
     client.close().await.ok();
     Ok(())
+}
+
+/// Whether `event` may be delivered to the user under the target's clipboard policy.
+fn clipboard_allows_event(policy: DesktopClipboardPolicy, event: &DesktopEvent) -> bool {
+    !matches!(event, DesktopEvent::Clipboard(_)) || policy.allows_from_target()
+}
+
+/// Whether `input` may be sent to the target under its clipboard policy.
+fn clipboard_allows_input(policy: DesktopClipboardPolicy, input: &DesktopInput) -> bool {
+    !matches!(input, DesktopInput::Clipboard(_)) || policy.allows_to_target()
 }
 
 fn map_event(event: VncEvent) -> Option<DesktopEvent> {
@@ -263,4 +282,29 @@ fn map_event(event: VncEvent) -> Option<DesktopEvent> {
         // is not surfaced.
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use warpgate_common::DesktopClipboardPolicy;
+    use warpgate_core::{DesktopEvent, DesktopInput};
+
+    use super::{clipboard_allows_event, clipboard_allows_input};
+
+    #[test]
+    fn clipboard_policy_filters_only_clipboard_traffic() {
+        let copied = DesktopEvent::Clipboard("secret".to_owned());
+        let pasted = DesktopInput::Clipboard("text".to_owned());
+        let bell = DesktopEvent::Bell;
+        let refresh = DesktopInput::Refresh;
+
+        assert!(!clipboard_allows_event(DesktopClipboardPolicy::ToTarget, &copied));
+        assert!(clipboard_allows_input(DesktopClipboardPolicy::ToTarget, &pasted));
+        assert!(clipboard_allows_event(DesktopClipboardPolicy::FromTarget, &copied));
+        assert!(!clipboard_allows_input(DesktopClipboardPolicy::FromTarget, &pasted));
+
+        // Everything that is not clipboard passes regardless of the policy.
+        assert!(clipboard_allows_event(DesktopClipboardPolicy::Disabled, &bell));
+        assert!(clipboard_allows_input(DesktopClipboardPolicy::Disabled, &refresh));
+    }
 }
