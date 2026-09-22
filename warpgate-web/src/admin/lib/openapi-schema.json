@@ -5115,6 +5115,16 @@
           }
         }
       },
+      "DesktopClipboardPolicy": {
+        "type": "string",
+        "description": "Which way text may cross the clipboard between the user and a desktop (RDP/VNC)\ntarget. Enforced where Warpgate talks to the target, so it holds for the web\ndesktop and for native clients alike.",
+        "enum": [
+          "bidirectional",
+          "to_target",
+          "from_target",
+          "disabled"
+        ]
+      },
       "ExistingCertificateCredential": {
         "type": "object",
         "title": "ExistingCertificateCredential",
@@ -7370,6 +7380,7 @@
           "verify_tls",
           "compression",
           "interactive_logon",
+          "clipboard",
           "tls_security"
         ],
         "properties": {
@@ -7399,6 +7410,9 @@
           "interactive_logon": {
             "type": "boolean",
             "description": "Show the target's own sign-in screen instead of logging on automatically.\nThe stored credentials still pass network-level authentication (CredSSP)."
+          },
+          "clipboard": {
+            "$ref": "#/components/schemas/DesktopClipboardPolicy"
           },
           "tls_security": {
             "$ref": "#/components/schemas/RdpTlsSecurity"
@@ -7495,7 +7509,8 @@
         "required": [
           "host",
           "port",
-          "auth"
+          "auth",
+          "clipboard"
         ],
         "properties": {
           "host": {
@@ -7507,6 +7522,9 @@
           },
           "auth": {
             "$ref": "#/components/schemas/VncTargetAuth"
+          },
+          "clipboard": {
+            "$ref": "#/components/schemas/DesktopClipboardPolicy"
           }
         }
       },

@@ -6,6 +6,7 @@
         type TargetOptionsTargetRdpOptions,
     } from 'admin/lib/api'
     import HelpText from 'admin/lib/HelpText.svelte'
+    import DesktopClipboardPolicySelect from '../DesktopClipboardPolicySelect.svelte'
 
     interface Props {
         options: TargetOptionsTargetRdpOptions
@@ -104,3 +105,5 @@
     will significantly improve image quality, even if the client is connecting
     remotely.
 </HelpText>
+
+<DesktopClipboardPolicySelect bind:clipboard={options.clipboard} />
