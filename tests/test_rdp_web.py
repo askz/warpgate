@@ -60,6 +60,7 @@ class Test:
                             ),
                             verify_tls=False,
                             interactive_logon=False,
+                            clipboard=sdk.DesktopClipboardPolicy.BIDIRECTIONAL,
                         )
                     ),
                 )

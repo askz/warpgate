@@ -43,6 +43,7 @@ class Test:
                                     kind="Password", password="123"
                                 )
                             ),
+                            clipboard=sdk.DesktopClipboardPolicy.BIDIRECTIONAL,
                         )
                     ),
                 )
@@ -96,6 +97,7 @@ class Test:
                                     kind="Password", password="123"
                                 )
                             ),
+                            clipboard=sdk.DesktopClipboardPolicy.BIDIRECTIONAL,
                         )
                     ),
                 )
