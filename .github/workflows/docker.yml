@@ -11,7 +11,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: warp-tech/warpgate
+  IMAGE_NAME: ${{ github.repository }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -146,6 +146,7 @@ jobs:
           tags: |
             type=ref,event=branch,prefix=branch-
             type=ref,event=pr,prefix=pr-
+            type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=schedule
