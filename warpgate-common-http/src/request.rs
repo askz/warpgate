@@ -1,3 +1,5 @@
+use std::net::{IpAddr, SocketAddr};
+
 use poem::Request;
 use poem::http::header::HOST;
 use poem::http::uri::Scheme;
@@ -62,6 +64,20 @@ pub fn trusted_client_ip(
         Some(ip.to_string())
     } else {
         remote_ip
+    }
+}
+
+/// The address to record for a client session. A proxy forwards the client's
+/// IP but not its port, so a client known only from forwarding headers is
+/// recorded with port 0; a client that is the peer itself keeps its socket.
+pub fn client_socket_addr(
+    peer: Option<SocketAddr>,
+    client_ip: Option<IpAddr>,
+) -> Option<SocketAddr> {
+    match (peer, client_ip) {
+        (Some(peer), Some(ip)) if peer.ip().to_canonical() == ip.to_canonical() => Some(peer),
+        (_, Some(ip)) => Some(SocketAddr::new(ip, 0)),
+        (peer, None) => peer,
     }
 }
 
@@ -192,6 +208,31 @@ mod tests {
             ),
             Some("203.0.113.10".to_string())
         );
+    }
+
+    #[test]
+    fn client_socket_addr_records_the_forwarded_client() {
+        let proxy = "[::ffff:10.0.0.2]:50834".parse().ok();
+        let client = "203.0.113.10".parse().ok();
+        assert_eq!(
+            client_socket_addr(proxy, client),
+            "203.0.113.10:0".parse().ok()
+        );
+    }
+
+    #[test]
+    fn client_socket_addr_keeps_the_peer_socket_of_a_direct_client() {
+        let peer = "[::ffff:203.0.113.10]:50834".parse().ok();
+        let client = "::ffff:203.0.113.10".parse().ok();
+        assert_eq!(client_socket_addr(peer, client), peer);
+        assert_eq!(client_socket_addr(peer, "203.0.113.10".parse().ok()), peer);
+    }
+
+    #[test]
+    fn client_socket_addr_falls_back_to_the_peer() {
+        let peer = "10.0.0.1:443".parse().ok();
+        assert_eq!(client_socket_addr(peer, None), peer);
+        assert_eq!(client_socket_addr(None, None), None);
     }
 
     #[test]
