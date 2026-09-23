@@ -1,4 +1,4 @@
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
 use poem::http::{Method, StatusCode, Uri};
 use poem::web::RemoteAddr;
@@ -6,11 +6,11 @@ use poem::{Addr, Request};
 use tracing::*;
 use warpgate_core::{Services, WarpgateServerHandle};
 
-use crate::request::trusted_client_ip;
+use crate::request::{client_socket_addr, trusted_client_ip};
 
-/// The peer IP of the connection itself, ignoring any forwarding headers.
-pub fn raw_remote_ip(req: &Request) -> Option<String> {
-    let socket_addr = match req.remote_addr() {
+/// The peer socket of the connection itself, ignoring any forwarding headers.
+pub fn raw_remote_socket_addr(req: &Request) -> Option<SocketAddr> {
+    match req.remote_addr() {
         // See [CertificateExtractorEndpoint]
         RemoteAddr(Addr::Custom("captured-cert", value)) => {
             #[allow(clippy::unwrap_used)]
@@ -21,9 +21,12 @@ pub fn raw_remote_ip(req: &Request) -> Option<String> {
                 .and_then(|i| i.into_iter().next())
         }
         other => other.as_socket_addr().copied(),
-    };
+    }
+}
 
-    socket_addr.map(|x| x.ip().to_string())
+/// The peer IP of the connection itself, ignoring any forwarding headers.
+pub fn raw_remote_ip(req: &Request) -> Option<String> {
+    raw_remote_socket_addr(req).map(|x| x.ip().to_string())
 }
 
 pub async fn get_client_ip(req: &Request, services: &Services) -> Option<String> {
@@ -44,6 +47,15 @@ pub async fn get_client_ip_addr(req: &Request, services: &Services) -> Option<Ip
     get_client_ip(req, services)
         .await
         .and_then(|ip| ip.parse().ok())
+}
+
+/// The client address to record on a session, with the same forwarding-header
+/// trust as [get_client_ip].
+pub async fn get_client_socket_addr(req: &Request, services: &Services) -> Option<SocketAddr> {
+    client_socket_addr(
+        raw_remote_socket_addr(req),
+        get_client_ip_addr(req, services).await,
+    )
 }
 
 pub async fn span_for_request(

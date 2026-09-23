@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use poem::http::StatusCode;
 use poem::session::Session;
-use poem::web::{Data, RemoteAddr};
+use poem::web::Data;
 use poem::{Request, Response};
 use poem_openapi::param::Path;
 use poem_openapi::payload::Json;
@@ -12,6 +12,7 @@ use warpgate_admin::api::cluster_proxy::{
     ReparseForwardedResponse, forwarded_error, parse_forwarded_body, proxy_or_serve,
 };
 use warpgate_common::{UserSessionId, WarpgateError};
+use warpgate_common_http::logging::get_client_socket_addr;
 use warpgate_db_entities::Target::TargetKind;
 use warpgate_web_clients_common::SessionAccess;
 use warpgate_web_ssh::WebSshClientManager;
@@ -80,7 +81,7 @@ impl Api {
     )]
     async fn api_create_web_ssh_session(
         &self,
-        remote_addr: &RemoteAddr,
+        req: &Request,
         session: &Session,
         ctx: AuthedSession,
         body: Json<CreateWebSshSessionBody>,
@@ -102,7 +103,7 @@ impl Api {
             .create_session(
                 ctx.services(),
                 authorization,
-                remote_addr.0.as_socket_addr().copied(),
+                get_client_socket_addr(req, ctx.services()).await,
             )
             .await;
 
